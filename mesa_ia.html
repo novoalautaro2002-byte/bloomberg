@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesa IA — AR Capital Markets</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23f59e0b'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='monospace' font-weight='900' font-size='20' fill='%23020617'%3EM%3C/text%3E%3C/svg%3E"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { font-family: 'JetBrains Mono', ui-monospace, monospace; background: #020617; }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+      50% { box-shadow: 0 0 12px 2px rgba(245,158,11,0.25); }
+    }
+    @keyframes flash-bg {
+      0% { background-color: rgba(245,158,11,0.15); }
+      100% { background-color: transparent; }
+    }
+    @keyframes cursor-blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+    .pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+    .glow-amber { animation: glow 3s ease-in-out infinite; }
+    .flash-new { animation: flash-bg 1.5s ease-out; }
+    .cursor-blink::after { content: '▊'; animation: cursor-blink 1s infinite; color: #f59e0b; margin-left: 2px; }
+    .font-display { font-family: 'IBM Plex Sans Condensed', sans-serif; letter-spacing: 0.02em; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 0; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    /* Loading screen */
+    #boot { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 9999; flex-direction: column; gap: 1rem; color: #f59e0b; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.2em; font-size: 11px; }
+    #boot::before { content: 'M'; width: 48px; height: 48px; background: #f59e0b; color: #020617; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 28px; font-family: 'IBM Plex Sans Condensed'; animation: glow 2s infinite; }
+    .boot-hidden { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200">
+  <div id="boot">
+    <div>CARGANDO MESA · AR CAPITAL MARKETS</div>
+  </div>
+  <div id="root"></div>
+  <script>
+    // Safety timeout — ocultar boot screen si algo falla (ej. CDN bloqueado)
+    setTimeout(() => {
+      const b = document.getElementById('boot');
+      if (b && !b.classList.contains('boot-hidden')) {
+        b.classList.add('boot-hidden');
+      }
+    }, 8000);
+  </script>
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Recharts (prop-types is a peer dep) -->
+  <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback, Fragment } = React;
+const {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, ScatterChart, Scatter, Cell
+} = Recharts;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ICONS (inline SVG replacements for lucide)
+// ═══════════════════════════════════════════════════════════════════════════
+const Icon = ({ className, children, style }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+       strokeLinejoin="round" className={className} style={style}>{children}</svg>
+);
+const Activity  = (p) => <Icon {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></Icon>;
+const TrendingUp= (p) => <Icon {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Icon>;
+const RefreshCw = (p) => <Icon {...p}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></Icon>;
+const Send      = (p) => <Icon {...p}><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></Icon>;
+const Sparkles  = (p) => <Icon {...p}><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></Icon>;
+const CircleIcon= (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/></Icon>;
+const AlertCircle=(p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></Icon>;
+const Loader2   = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></Icon>;
+const Zap       = (p) => <Icon {...p}><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></Icon>;
+const ArrowUp   = (p) => <Icon {...p}><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></Icon>;
+const ArrowDown = (p) => <Icon {...p}><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></Icon>;
+const DollarSign= (p) => <Icon {...p}><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></Icon>;
+const Settings  = (p) => <Icon {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
+const Key       = (p) => <Icon {...p}><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></Icon>;
+const X         = (p) => <Icon {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>;
+const ExternalLink=(p) => <Icon {...p}><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></Icon>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+const POLL_INTERVAL = 20000;
+const LS_KEY = 'mesa_ia_anthropic_key_v1';
+
+const ENDPOINTS = {
+  bonds:   'https://data912.com/live/arg_bonds',
+  notes:   'https://data912.com/live/arg_notes',
+  dolares: 'https://dolarapi.com/v1/dolares'
+};
+
+const BOND_META = {
+  'AL29': { mat: '2029-07-09', ccy: 'USD', law: 'Local', coupon: 1.0  },
+  'AL30': { mat: '2030-07-09', ccy: 'USD', law: 'Local', coupon: 0.75 },
+  'AL35': { mat: '2035-07-09', ccy: 'USD', law: 'Local', coupon: 3.625},
+  'AE38': { mat: '2038-01-09', ccy: 'USD', law: 'Local', coupon: 4.25 },
+  'AL41': { mat: '2041-07-09', ccy: 'USD', law: 'Local', coupon: 3.5  },
+  'GD29': { mat: '2029-07-09', ccy: 'USD', law: 'NY',    coupon: 1.0  },
+  'GD30': { mat: '2030-07-09', ccy: 'USD', law: 'NY',    coupon: 0.75 },
+  'GD35': { mat: '2035-07-09', ccy: 'USD', law: 'NY',    coupon: 3.625},
+  'GD38': { mat: '2038-01-09', ccy: 'USD', law: 'NY',    coupon: 4.25 },
+  'GD41': { mat: '2041-07-09', ccy: 'USD', law: 'NY',    coupon: 3.5  },
+  'GD46': { mat: '2046-07-09', ccy: 'USD', law: 'NY',    coupon: 3.625}
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+const fetchSafe = async (url) => {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error();
+    return await r.json();
+  } catch {
+    const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+    if (!r.ok) throw new Error(`fetch failed: ${url}`);
+    return await r.json();
+  }
+};
+
+const fmt = (n, d = 2) => {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+
+const fmtPct = (n, d = 2) => {
+  if (n == null || isNaN(n)) return '—';
+  const s = n > 0 ? '+' : '';
+  return `${s}${fmt(n, d)}%`;
+};
+
+const yearsTo = (matStr) => {
+  if (!matStr) return null;
+  return (new Date(matStr) - new Date()) / (1000 * 60 * 60 * 24 * 365.25);
+};
+
+const roughYTM = (price, yearsLeft, coupon = 3.5) => {
+  if (!price || !yearsLeft || yearsLeft <= 0) return null;
+  const pullToPar = ((100 - price) / price) / yearsLeft * 100;
+  const currentYield = (coupon / price) * 100;
+  return currentYield + pullToPar;
+};
+
+const roughDuration = (yearsLeft, ytm) => {
+  if (!yearsLeft || !ytm) return null;
+  return yearsLeft / (1 + (ytm / 100) * 0.5);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+function MesaIA() {
+  const [bonds, setBonds] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [dolares, setDolares] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [err, setErr] = useState(null);
+  const [isFetching, setIsFetching] = useState(false);
+
+  const [tab, setTab] = useState('soberanos');
+  const [now, setNow] = useState(new Date());
+  const [sortKey, setSortKey] = useState('yearsLeft');
+  const [sortDir, setSortDir] = useState('asc');
+
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef(null);
+
+  // API key
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const saveKey = (k) => {
+    setApiKey(k);
+    try { localStorage.setItem(LS_KEY, k); } catch {}
+  };
+
+  useEffect(() => {
+    const i = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  const fetchAll = useCallback(async () => {
+    setIsFetching(true);
+    try {
+      const [b, n, d] = await Promise.allSettled([
+        fetchSafe(ENDPOINTS.bonds),
+        fetchSafe(ENDPOINTS.notes),
+        fetchSafe(ENDPOINTS.dolares)
+      ]);
+      if (b.status === 'fulfilled') setBonds(b.value || []);
+      if (n.status === 'fulfilled') setNotes(n.value || []);
+      if (d.status === 'fulfilled') setDolares(d.value || []);
+      setLastUpdate(new Date());
+      setErr(null);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+      setTimeout(() => setIsFetching(false), 400);
+      // Hide boot screen
+      const boot = document.getElementById('boot');
+      if (boot) boot.classList.add('boot-hidden');
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const i = setInterval(fetchAll, POLL_INTERVAL);
+    return () => clearInterval(i);
+  }, [fetchAll]);
+
+  const sovereignBonds = useMemo(() => {
+    if (!bonds.length) return [];
+    return bonds
+      .filter(b => b.symbol && BOND_META[b.symbol])
+      .map(b => {
+        const m = BOND_META[b.symbol];
+        const yl = yearsTo(m.mat);
+        const tir = roughYTM(b.c, yl, m.coupon);
+        const dur = roughDuration(yl, tir);
+        return {
+          symbol: b.symbol, price: b.c,
+          chg: b.pct_change ?? b.variation ?? null,
+          bid: b.px_bid ?? null, ask: b.px_ask ?? null,
+          vol: b.q_op ?? b.volume ?? null,
+          yearsLeft: yl, tir, dur,
+          law: m.law, coupon: m.coupon, mat: m.mat
+        };
+      });
+  }, [bonds]);
+
+  const sortedSov = useMemo(() => {
+    const arr = [...sovereignBonds];
+    arr.sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+    return arr;
+  }, [sovereignBonds, sortKey, sortDir]);
+
+  const lecaps = useMemo(() => {
+    if (!notes.length) return [];
+    return notes.filter(n => n.symbol && n.c).map(n => ({
+      symbol: n.symbol, price: n.c,
+      chg: n.pct_change ?? n.variation ?? null,
+      bid: n.px_bid ?? null, ask: n.px_ask ?? null
+    })).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [notes]);
+
+  const dolarBy = useMemo(() => {
+    const m = {};
+    dolares.forEach(d => { m[d.casa] = d; });
+    return m;
+  }, [dolares]);
+
+  const dolarCards = [
+    { key: 'oficial',          label: 'OFICIAL',   data: dolarBy.oficial },
+    { key: 'mayorista',        label: 'MAYORISTA', data: dolarBy.mayorista },
+    { key: 'bolsa',            label: 'MEP',       data: dolarBy.bolsa },
+    { key: 'contadoconliqui',  label: 'CCL',       data: dolarBy.contadoconliqui },
+    { key: 'blue',             label: 'BLUE',      data: dolarBy.blue },
+    { key: 'cripto',           label: 'CRIPTO',    data: dolarBy.cripto },
+    { key: 'tarjeta',          label: 'TARJETA',   data: dolarBy.tarjeta }
+  ].filter(x => x.data);
+
+  const brecha = useMemo(() => {
+    const of = dolarBy.oficial?.venta;
+    const mep = dolarBy.bolsa?.venta;
+    const ccl = dolarBy.contadoconliqui?.venta;
+    if (!of) return {};
+    return {
+      mep: mep ? ((mep / of) - 1) * 100 : null,
+      ccl: ccl ? ((ccl / of) - 1) * 100 : null
+    };
+  }, [dolarBy]);
+
+  const sovStats = useMemo(() => {
+    const w = sovereignBonds.filter(b => b.tir != null);
+    if (!w.length) return null;
+    const avg = w.reduce((s, b) => s + b.tir, 0) / w.length;
+    const max = w.reduce((m, b) => b.tir > m.tir ? b : m, w[0]);
+    const min = w.reduce((m, b) => b.tir < m.tir ? b : m, w[0]);
+    return { avg, max, min, count: w.length };
+  }, [sovereignBonds]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, chatLoading]);
+
+  const askAI = async (question) => {
+    if (!question.trim() || chatLoading) return;
+    if (!apiKey) { setSettingsOpen(true); return; }
+    const q = question.trim();
+    setMessages(prev => [...prev, { role: 'user', content: q }]);
+    setInput('');
+    setChatLoading(true);
+
+    const ctx = {
+      timestamp: now.toISOString(),
+      soberanos_usd: sovereignBonds.map(b => ({
+        symbol: b.symbol, precio: b.price,
+        tir_aprox_pct: b.tir?.toFixed(2),
+        anios_al_vto: b.yearsLeft?.toFixed(2),
+        ley: b.law, cupon_pct: b.coupon, chg_pct: b.chg
+      })),
+      lecaps: lecaps.slice(0, 20).map(l => ({
+        symbol: l.symbol, precio: l.price, chg_pct: l.chg
+      })),
+      dolares: {
+        oficial: dolarBy.oficial?.venta,
+        mayorista: dolarBy.mayorista?.venta,
+        mep: dolarBy.bolsa?.venta,
+        ccl: dolarBy.contadoconliqui?.venta,
+        blue: dolarBy.blue?.venta,
+        cripto: dolarBy.cripto?.venta,
+        brecha_mep_pct: brecha.mep?.toFixed(1),
+        brecha_ccl_pct: brecha.ccl?.toFixed(1)
+      }
+    };
+
+    const sys = `Sos un analista financiero senior de un ALyC argentino, experto en mercado de capitales local (BYMA, MERVAL, MAE). Hablás Rioplatense. Sos directo, técnico y concreto. Usás vocabulario de mesa: TIR, paridad, duration, pull-to-par, canje, MEP, CCL, TEM, spread, curve, etc.
+
+Tenés datos live del mercado argentino que se te pasan en cada turno. Estilo:
+- Citá números específicos del CONTEXTO
+- Respondé como chat de mesa: conciso, máx 180 palabras
+- NO uses disclaimers legales ("esto no es consejo de inversión")
+- NO uses bullets ni headers markdown excesivos; escribí como trader experto chateando
+- Podés usar negritas con ** para destacar tickers/números clave
+- Si el dato no está en el contexto, decilo sin vueltas
+- Aclará cuando una TIR es aproximada (el contexto las marca como "aprox")
+
+CONTEXTO MERCADO (live):
+${JSON.stringify(ctx, null, 2)}`;
+
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: sys,
+          messages: [
+            ...messages.slice(-8).map(m => ({ role: m.role, content: m.content })),
+            { role: 'user', content: q }
+          ]
+        })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      const text = data.content?.filter(b => b.type === 'text').map(b => b.text).join('\n') || 'Error al procesar respuesta.';
+      setMessages(prev => [...prev, { role: 'assistant', content: text }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `⚠ Error API: ${e.message}\n\nSi es problema de autenticación, revisá tu API key en el ícono de settings.` }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const timeStr = now.toLocaleTimeString('es-AR', { hour12: false });
+  const dateStr = now.toLocaleDateString('es-AR', {
+    weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'
+  }).toUpperCase();
+
+  const marketOpen = (() => {
+    const h = now.getHours(), m = now.getMinutes(), day = now.getDay();
+    const mins = h * 60 + m;
+    return day >= 1 && day <= 5 && mins >= 660 && mins < 1020;
+  })();
+
+  const quickQs = [
+    '¿Dónde hay valor en la curva hard-dollar hoy?',
+    'Analizá el spread GD vs AL (ley NY vs local)',
+    '¿Qué pasa con el MEP/CCL y la brecha?',
+    'Pickeá la mejor LECAP por relación precio/plazo'
+  ];
+
+  return (
+    <div className="min-h-screen w-full bg-slate-950 text-slate-200">
+      {/* ═══ HEADER ═══ */}
+      <header className="border-b-2 border-amber-500/60 bg-slate-950 relative">
+        <div className="px-6 py-3 flex items-center justify-between gap-6 flex-wrap">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-amber-500 flex items-center justify-center">
+                <span className="text-slate-950 font-bold text-lg font-display">M</span>
+              </div>
+              <div className="flex flex-col leading-none">
+                <span className="text-amber-500 font-bold text-[13px] tracking-[0.2em] font-display">MESA IA</span>
+                <span className="text-slate-500 text-[10px] tracking-widest">AR CAPITAL MARKETS</span>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-slate-800"/>
+            <div className="flex items-center gap-2 text-[11px]">
+              <CircleIcon className={`w-2 h-2 ${marketOpen ? 'fill-emerald-400 text-emerald-400 pulse-dot' : 'fill-rose-500 text-rose-500'}`}/>
+              <span className={marketOpen ? 'text-emerald-400' : 'text-rose-400'}>
+                {marketOpen ? 'MARKET OPEN' : 'MARKET CLOSED'}
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="text-slate-500">BYMA</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-[11px]">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">LAST</span>
+              <span className="text-slate-300 tabular">
+                {lastUpdate ? lastUpdate.toLocaleTimeString('es-AR', { hour12: false }) : '--:--:--'}
+              </span>
+              {isFetching && <Loader2 className="w-3 h-3 text-amber-500 animate-spin"/>}
+            </div>
+            <button onClick={fetchAll}
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-slate-800 hover:border-amber-500/60 hover:bg-slate-900 transition-colors text-slate-400 hover:text-amber-400">
+              <RefreshCw className="w-3 h-3"/>
+              <span className="tracking-wider">REFRESH</span>
+            </button>
+            <button onClick={() => setSettingsOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-slate-800 hover:border-amber-500/60 hover:bg-slate-900 transition-colors text-slate-400 hover:text-amber-400">
+              <Settings className="w-3 h-3"/>
+              <span className="tracking-wider">{apiKey ? 'API ✓' : 'API ×'}</span>
+            </button>
+            <div className="flex flex-col items-end leading-tight">
+              <span className="text-amber-500 text-[18px] font-bold tabular">{timeStr}</span>
+              <span className="text-slate-500 text-[10px] tracking-wider">{dateStr} · ART</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-900 bg-slate-950 overflow-hidden">
+          <div className="px-6 py-1.5 flex items-center gap-6 text-[11px] overflow-x-auto">
+            <span className="text-amber-500 font-bold tracking-widest shrink-0">FX · </span>
+            {dolarCards.slice(0, 7).map(d => (
+              <div key={d.key} className="flex items-center gap-2 shrink-0">
+                <span className="text-slate-500 tracking-wider">{d.label}</span>
+                <span className="text-slate-200 tabular font-semibold">${fmt(d.data?.venta, 2)}</span>
+                {d.data?.variacion != null && (
+                  <span className={`tabular ${d.data.variacion > 0 ? 'text-emerald-400' : d.data.variacion < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                    {fmtPct(d.data.variacion, 2)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {err && (
+        <div className="bg-rose-950/40 border-b border-rose-800/60 px-6 py-2 text-rose-300 text-[11px] flex items-center gap-2">
+          <AlertCircle className="w-3.5 h-3.5"/> API error: {err} — reintentando...
+        </div>
+      )}
+
+      {/* ═══ MAIN GRID ═══ */}
+      <main className="grid grid-cols-12 gap-0 min-h-[calc(100vh-98px)]">
+        {/* ─── LEFT: DATA ─── */}
+        <section className="col-span-12 lg:col-span-7 border-r border-slate-900 relative">
+          <div className="flex border-b border-slate-900 bg-slate-950 sticky top-0 z-20 overflow-x-auto">
+            {[
+              { k: 'soberanos', l: 'SOBERANOS USD',     ic: TrendingUp },
+              { k: 'lecaps',    l: 'LECAPS / BONCAPS', ic: Activity },
+              { k: 'curva',     l: 'CURVA',             ic: Zap },
+              { k: 'dolar',     l: 'DÓLARES',           ic: DollarSign }
+            ].map(({ k, l, ic: Ic }) => (
+              <button key={k} onClick={() => setTab(k)}
+                className={`relative px-5 py-3 text-[11px] tracking-[0.15em] flex items-center gap-2 transition-colors shrink-0 ${
+                  tab === k ? 'text-amber-400 bg-slate-900' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900/50'
+                }`}>
+                <Ic className="w-3.5 h-3.5"/>
+                <span className="font-semibold">{l}</span>
+                {tab === k && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500"/>}
+              </button>
+            ))}
+          </div>
+
+          {loading && (
+            <div className="flex items-center justify-center py-32 text-slate-500 text-sm">
+              <Loader2 className="w-5 h-5 animate-spin mr-3 text-amber-500"/>
+              Conectando al mercado...
+            </div>
+          )}
+
+          {!loading && tab === 'soberanos' && (
+            <div className="p-5 space-y-5">
+              {sovStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <StatCard label="TIR PROMEDIO" value={`${fmt(sovStats.avg, 1)}%`} sub={`${sovStats.count} bonos`} tone="amber"/>
+                  <StatCard label="TIR MÁX" value={`${fmt(sovStats.max.tir, 1)}%`} sub={sovStats.max.symbol} tone="emerald"/>
+                  <StatCard label="TIR MÍN" value={`${fmt(sovStats.min.tir, 1)}%`} sub={sovStats.min.symbol} tone="rose"/>
+                  <StatCard label="DISPERSIÓN" value={`${fmt(sovStats.max.tir - sovStats.min.tir, 1)}pp`} sub="max − min" tone="cyan"/>
+                </div>
+              )}
+
+              <div className="border border-slate-900 bg-slate-900/30 overflow-x-auto">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-slate-900 bg-slate-950">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-amber-500 pulse-dot"/>
+                    <span className="text-[11px] tracking-[0.2em] text-amber-500 font-semibold">HARD-DOLLAR SOVEREIGNS</span>
+                  </div>
+                  <span className="text-[10px] text-slate-600 tracking-wider hidden sm:inline">
+                    TIR APROX · CURRENT YIELD + PULL-TO-PAR
+                  </span>
+                </div>
+                <table className="w-full text-[12px] tabular">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-slate-900 text-[10px] tracking-widest">
+                      <Th onClick={() => { setSortKey('symbol'); setSortDir(d => sortKey==='symbol' && d==='asc'?'desc':'asc'); }} active={sortKey==='symbol'} dir={sortDir}>TICKER</Th>
+                      <Th onClick={() => { setSortKey('yearsLeft'); setSortDir(d => sortKey==='yearsLeft' && d==='asc'?'desc':'asc'); }} active={sortKey==='yearsLeft'} dir={sortDir}>VTO</Th>
+                      <Th onClick={() => { setSortKey('price'); setSortDir(d => sortKey==='price' && d==='asc'?'desc':'asc'); }} active={sortKey==='price'} dir={sortDir} align="right">LAST</Th>
+                      <Th onClick={() => { setSortKey('chg'); setSortDir(d => sortKey==='chg' && d==='asc'?'desc':'asc'); }} active={sortKey==='chg'} dir={sortDir} align="right">CHG%</Th>
+                      <Th onClick={() => { setSortKey('tir'); setSortDir(d => sortKey==='tir' && d==='asc'?'desc':'asc'); }} active={sortKey==='tir'} dir={sortDir} align="right">TIR%</Th>
+                      <th className="text-right px-3 py-2">DUR</th>
+                      <th className="text-center px-3 py-2">LEY</th>
+                      <th className="text-right px-3 py-2">CUP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedSov.map(b => (
+                      <tr key={b.symbol} className="border-b border-slate-900/60 hover:bg-amber-500/5 transition-colors group">
+                        <td className="px-3 py-2 font-bold text-amber-400 group-hover:text-amber-300">{b.symbol}</td>
+                        <td className="px-3 py-2 text-slate-400">{b.yearsLeft?.toFixed(1)}<span className="text-slate-600 text-[10px]">Y</span></td>
+                        <td className="px-3 py-2 text-right text-slate-200 font-semibold">{fmt(b.price, 2)}</td>
+                        <td className={`px-3 py-2 text-right ${b.chg > 0 ? 'text-emerald-400' : b.chg < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                          {b.chg != null ? (
+                            <span className="inline-flex items-center gap-0.5">
+                              {b.chg > 0 ? <ArrowUp className="w-3 h-3"/> : b.chg < 0 ? <ArrowDown className="w-3 h-3"/> : null}
+                              {fmtPct(b.chg, 2)}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-100 font-semibold">{b.tir?.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-right text-slate-500">{b.dur?.toFixed(1)}</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`text-[10px] px-1.5 py-0.5 ${
+                            b.law === 'NY' ? 'bg-cyan-950/50 text-cyan-400 border border-cyan-900'
+                                           : 'bg-slate-900 text-slate-400 border border-slate-800'
+                          }`}>{b.law}</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-500">{b.coupon}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!sortedSov.length && (
+                  <div className="py-10 text-center text-slate-600 text-sm">Sin datos de soberanos.</div>
+                )}
+              </div>
+
+              <p className="text-[10px] text-slate-600 leading-relaxed">
+                * TIR y Duration son aproximaciones de mesa (current yield + pull-to-par anualizado). Para TIR exacta descontar flujos del bono.
+              </p>
+            </div>
+          )}
+
+          {!loading && tab === 'lecaps' && (
+            <div className="p-5 space-y-5">
+              <div className="grid grid-cols-3 gap-3">
+                <StatCard label="INSTRUMENTOS" value={lecaps.length} sub="cotizando" tone="amber"/>
+                <StatCard label="PROMEDIO" value={lecaps.length ? `$${fmt(lecaps.reduce((s,l)=>s+l.price,0)/lecaps.length, 1)}` : '—'} sub="precio simple" tone="cyan"/>
+                <StatCard label="RANGO" value={lecaps.length ? `$${fmt(Math.min(...lecaps.map(l=>l.price)),0)}–${fmt(Math.max(...lecaps.map(l=>l.price)),0)}` : '—'} sub="min - max" tone="emerald"/>
+              </div>
+
+              <div className="border border-slate-900 bg-slate-900/30">
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-900 bg-slate-950">
+                  <div className="w-1.5 h-1.5 bg-amber-500 pulse-dot"/>
+                  <span className="text-[11px] tracking-[0.2em] text-amber-500 font-semibold">LECAPs / BONCAPs — PESOS</span>
+                </div>
+                <div className="max-h-[500px] overflow-y-auto">
+                  <table className="w-full text-[12px] tabular">
+                    <thead className="sticky top-0 bg-slate-950">
+                      <tr className="text-slate-500 border-b border-slate-900 text-[10px] tracking-widest">
+                        <th className="text-left px-3 py-2">TICKER</th>
+                        <th className="text-right px-3 py-2">LAST</th>
+                        <th className="text-right px-3 py-2">CHG%</th>
+                        <th className="text-right px-3 py-2">BID</th>
+                        <th className="text-right px-3 py-2">ASK</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lecaps.map(l => (
+                        <tr key={l.symbol} className="border-b border-slate-900/60 hover:bg-amber-500/5 transition-colors">
+                          <td className="px-3 py-2 font-bold text-amber-400">{l.symbol}</td>
+                          <td className="px-3 py-2 text-right text-slate-200 font-semibold">{fmt(l.price, 2)}</td>
+                          <td className={`px-3 py-2 text-right ${l.chg > 0 ? 'text-emerald-400' : l.chg < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                            {l.chg != null ? fmtPct(l.chg, 2) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-500">{fmt(l.bid, 2)}</td>
+                          <td className="px-3 py-2 text-right text-slate-500">{fmt(l.ask, 2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!loading && tab === 'curva' && (
+            <div className="p-5 space-y-5">
+              <div className="border border-slate-900 bg-slate-900/30 p-4">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-amber-500 pulse-dot"/>
+                    <span className="text-[11px] tracking-[0.2em] text-amber-500 font-semibold">YIELD CURVE — SOVEREIGN USD</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-[10px] text-slate-500">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-full bg-amber-500"/><span>LEY LOCAL</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-full bg-cyan-400"/><span>LEY NY</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ width: '100%', height: 380 }}>
+                  <ResponsiveContainer>
+                    <ScatterChart margin={{ top: 20, right: 30, bottom: 40, left: 40 }}>
+                      <CartesianGrid strokeDasharray="2 4" stroke="#1e293b"/>
+                      <XAxis dataKey="yearsLeft" name="años" type="number" domain={[0, 'dataMax + 1']}
+                        stroke="#475569" tick={{ fontSize: 11, fill: '#64748b', fontFamily: 'JetBrains Mono' }}
+                        label={{ value: 'AÑOS AL VTO', position: 'insideBottom', offset: -20, fill: '#64748b', fontSize: 10, letterSpacing: '0.2em' }}/>
+                      <YAxis dataKey="tir" name="tir" type="number" domain={['dataMin - 1', 'dataMax + 1']}
+                        stroke="#475569" tick={{ fontSize: 11, fill: '#64748b', fontFamily: 'JetBrains Mono' }}
+                        label={{ value: 'TIR %', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10, letterSpacing: '0.2em' }}/>
+                      <Tooltip content={<CurveTooltip/>}/>
+                      <Scatter data={sovereignBonds.filter(b => b.law === 'Local' && b.tir != null)} fill="#f59e0b"/>
+                      <Scatter data={sovereignBonds.filter(b => b.law === 'NY' && b.tir != null)} fill="#22d3ee"/>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <SpreadAnalysis bonds={sovereignBonds}/>
+            </div>
+          )}
+
+          {!loading && tab === 'dolar' && (
+            <div className="p-5 space-y-5">
+              {(brecha.mep != null || brecha.ccl != null) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <StatCard label="BRECHA MEP / OFICIAL" value={brecha.mep != null ? `${fmt(brecha.mep, 1)}%` : '—'} sub="spread cambiario" tone={brecha.mep > 20 ? 'rose' : 'emerald'}/>
+                  <StatCard label="BRECHA CCL / OFICIAL" value={brecha.ccl != null ? `${fmt(brecha.ccl, 1)}%` : '—'} sub="spread cambiario" tone={brecha.ccl > 20 ? 'rose' : 'emerald'}/>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {dolarCards.map(d => (
+                  <div key={d.key} className="border border-slate-900 bg-slate-900/30 p-4 hover:border-amber-500/40 transition-colors">
+                    <div className="flex items-start justify-between mb-2">
+                      <span className="text-[10px] tracking-[0.2em] text-slate-500 font-semibold">{d.label}</span>
+                      {d.data?.variacion != null && (
+                        <span className={`text-[11px] tabular ${d.data.variacion > 0 ? 'text-emerald-400' : d.data.variacion < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                          {fmtPct(d.data.variacion)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className="text-2xl font-bold text-slate-100 tabular">${fmt(d.data?.venta, 2)}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                      <span>COMPRA ${fmt(d.data?.compra, 2)}</span>
+                      <span className="text-slate-700">·</span>
+                      <span>VENTA ${fmt(d.data?.venta, 2)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* ─── RIGHT: AI ANALYST ─── */}
+        <aside className="col-span-12 lg:col-span-5 flex flex-col bg-slate-950 relative">
+          <div className="border-b border-slate-900 px-5 py-3 flex items-center justify-between bg-gradient-to-r from-slate-950 via-slate-900/50 to-slate-950">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Sparkles className="w-5 h-5 text-amber-400"/>
+                <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-emerald-400 rounded-full pulse-dot"/>
+              </div>
+              <div className="leading-tight">
+                <div className="text-[12px] tracking-[0.2em] font-semibold text-amber-400">IA ANALYST</div>
+                <div className="text-[10px] tracking-wider text-slate-500">CLAUDE · LIVE CONTEXT</div>
+              </div>
+            </div>
+            <div className="text-[10px] text-slate-500 tracking-wider flex items-center gap-1.5">
+              <CircleIcon className={`w-1.5 h-1.5 ${apiKey ? 'fill-emerald-400 text-emerald-400 pulse-dot' : 'fill-rose-500 text-rose-500'}`}/>
+              <span>{apiKey ? 'READY' : 'API KEY MISSING'}</span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-[400px]">
+            {messages.length === 0 && (
+              <div className="text-center py-8 space-y-6">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 border border-amber-500/30 bg-amber-500/5">
+                    <Zap className="w-3 h-3 text-amber-400"/>
+                    <span className="text-[10px] tracking-widest text-amber-400 font-semibold">MESA AR · CAPITAL MARKETS</span>
+                  </div>
+                  <h2 className="text-xl font-display font-bold text-slate-200">Analista con data live.</h2>
+                  <p className="text-[12px] text-slate-500 max-w-sm mx-auto leading-relaxed">
+                    Precios de soberanos, LECAPs y dólares inyectados en cada query.<br/>
+                    Preguntá como si fuera un colega de mesa.
+                  </p>
+                </div>
+
+                {!apiKey && (
+                  <div className="max-w-md mx-auto border border-rose-500/30 bg-rose-950/20 px-4 py-3 text-left text-[11px] text-rose-300 leading-relaxed">
+                    <div className="flex items-center gap-2 mb-1 font-semibold">
+                      <Key className="w-3 h-3"/> CONFIGURAR API KEY
+                    </div>
+                    <p className="text-slate-400">
+                      Para usar la IA Analyst necesitás tu propia API key de Anthropic.
+                      Se guarda solo en tu navegador (localStorage).
+                    </p>
+                    <button onClick={() => setSettingsOpen(true)}
+                      className="mt-2 text-amber-400 hover:text-amber-300 underline tracking-wider">
+                      CONFIGURAR →
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-2 max-w-md mx-auto">
+                  {quickQs.map((q, i) => (
+                    <button key={i} onClick={() => askAI(q)} disabled={!apiKey}
+                      className="text-left px-3 py-2.5 border border-slate-800 hover:border-amber-500/60 hover:bg-amber-500/5 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-[12px] text-slate-400 hover:text-amber-300 group flex items-start gap-2">
+                      <span className="text-amber-500/70 group-hover:text-amber-400 font-bold">›</span>
+                      <span>{q}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[92%] ${m.role === 'user' ? 'order-1' : ''}`}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className={`text-[9px] tracking-[0.2em] font-semibold ${m.role === 'user' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                      {m.role === 'user' ? '› YOU' : '‹ IA'}
+                    </span>
+                  </div>
+                  <div className={`px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
+                    m.role === 'user'
+                      ? 'bg-cyan-950/30 border-l-2 border-cyan-500/60 text-slate-200'
+                      : 'bg-slate-900/60 border-l-2 border-amber-500/60 text-slate-300'
+                  }`}>
+                    <MarkdownLite text={m.content}/>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {chatLoading && (
+              <div className="flex">
+                <div className="max-w-[92%]">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-[9px] tracking-[0.2em] font-semibold text-amber-400">‹ IA</span>
+                  </div>
+                  <div className="px-3 py-2 bg-slate-900/60 border-l-2 border-amber-500/60 flex items-center gap-2 text-[12px] text-slate-500">
+                    <Loader2 className="w-3 h-3 animate-spin text-amber-400"/>
+                    <span className="cursor-blink">analizando mercado</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef}/>
+          </div>
+
+          <div className="border-t border-slate-900 p-3 bg-slate-950">
+            <div className="flex gap-2 items-end">
+              <div className="flex-1 flex items-center border border-slate-800 focus-within:border-amber-500/60 bg-slate-900/50 transition-colors">
+                <span className="pl-3 text-amber-500 text-sm font-bold">›</span>
+                <input type="text" value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') askAI(input); }}
+                  disabled={chatLoading}
+                  placeholder={apiKey ? 'consultá a la mesa...' : 'configurá tu API key primero...'}
+                  className="flex-1 bg-transparent px-2 py-2.5 text-[13px] text-slate-200 placeholder-slate-600 outline-none tabular"/>
+              </div>
+              <button onClick={() => askAI(input)} disabled={chatLoading || !input.trim()}
+                className="px-3 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 transition-colors">
+                <Send className="w-4 h-4"/>
+              </button>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[9px] tracking-wider text-slate-600">
+              <span>ENTER para enviar</span>
+              <span>POWERED BY CLAUDE SONNET 4</span>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer className="border-t border-slate-900 bg-slate-950 px-6 py-2 flex items-center justify-between text-[10px] text-slate-600 tracking-wider flex-wrap gap-2">
+        <div className="flex items-center gap-4">
+          <span>DATA · data912 · dolarapi · allorigins (fallback)</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <span>POLL {POLL_INTERVAL/1000}s</span>
+          <span>·</span>
+          <span>MESA IA v1.0</span>
+        </div>
+      </footer>
+
+      {/* ═══ SETTINGS MODAL ═══ */}
+      {settingsOpen && (
+        <SettingsModal
+          apiKey={apiKey}
+          onSave={(k) => { saveKey(k); setSettingsOpen(false); }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUB-COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════
+function StatCard({ label, value, sub, tone = 'amber' }) {
+  const tones = {
+    amber:   'border-amber-500/30 text-amber-400',
+    emerald: 'border-emerald-500/30 text-emerald-400',
+    rose:    'border-rose-500/30 text-rose-400',
+    cyan:    'border-cyan-500/30 text-cyan-400'
+  };
+  return (
+    <div className={`border ${tones[tone]} bg-slate-900/30 px-3 py-2.5`}>
+      <div className="text-[9px] tracking-[0.2em] text-slate-500 font-semibold mb-1">{label}</div>
+      <div className="text-xl font-bold tabular leading-none">{value}</div>
+      <div className="text-[10px] text-slate-500 mt-1 tracking-wider">{sub}</div>
+    </div>
+  );
+}
+
+function Th({ children, onClick, active, dir, align = 'left' }) {
+  return (
+    <th className={`px-3 py-2 cursor-pointer hover:text-amber-400 transition-colors select-none text-${align}`} onClick={onClick}>
+      <span className="inline-flex items-center gap-0.5">
+        {children}
+        {active && (dir === 'asc' ? <ArrowUp className="w-2.5 h-2.5"/> : <ArrowDown className="w-2.5 h-2.5"/>)}
+      </span>
+    </th>
+  );
+}
+
+function CurveTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-slate-950 border border-amber-500/60 px-3 py-2 text-[11px] tabular shadow-xl"
+         style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+      <div className="text-amber-400 font-bold tracking-wider mb-1">{d.symbol}</div>
+      <div className="grid gap-x-3 gap-y-0.5 text-slate-300" style={{ gridTemplateColumns: 'auto auto' }}>
+        <span className="text-slate-500">TIR</span><span>{d.tir?.toFixed(2)}%</span>
+        <span className="text-slate-500">PRICE</span><span>{fmt(d.price, 2)}</span>
+        <span className="text-slate-500">VTO</span><span>{d.yearsLeft?.toFixed(1)}Y</span>
+        <span className="text-slate-500">LEY</span><span>{d.law}</span>
+        <span className="text-slate-500">CUP</span><span>{d.coupon}%</span>
+      </div>
+    </div>
+  );
+}
+
+function SpreadAnalysis({ bonds }) {
+  const pairs = [['AL29', 'GD29'], ['AL30', 'GD30'], ['AL35', 'GD35'], ['AE38', 'GD38'], ['AL41', 'GD41']];
+  const rows = pairs.map(([al, gd]) => {
+    const a = bonds.find(b => b.symbol === al);
+    const g = bonds.find(b => b.symbol === gd);
+    if (!a || !g || a.tir == null || g.tir == null) return null;
+    return { maturity: al.slice(2), spread: a.tir - g.tir, alPrice: a.price, gdPrice: g.price, alTir: a.tir, gdTir: g.tir };
+  }).filter(Boolean);
+
+  if (!rows.length) return null;
+
+  return (
+    <div className="border border-slate-900 bg-slate-900/30 overflow-x-auto">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-900 bg-slate-950">
+        <div className="w-1.5 h-1.5 bg-amber-500 pulse-dot"/>
+        <span className="text-[11px] tracking-[0.2em] text-amber-500 font-semibold">SPREAD LEY LOCAL vs NY</span>
+      </div>
+      <table className="w-full text-[12px] tabular">
+        <thead>
+          <tr className="text-slate-500 border-b border-slate-900 text-[10px] tracking-widest">
+            <th className="text-left px-3 py-2">VTO</th>
+            <th className="text-right px-3 py-2">AL (LOCAL)</th>
+            <th className="text-right px-3 py-2">TIR AL</th>
+            <th className="text-right px-3 py-2">GD (NY)</th>
+            <th className="text-right px-3 py-2">TIR GD</th>
+            <th className="text-right px-3 py-2">SPREAD</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.maturity} className="border-b border-slate-900/60 hover:bg-amber-500/5 transition-colors">
+              <td className="px-3 py-2 font-bold text-amber-400">20{r.maturity}</td>
+              <td className="px-3 py-2 text-right text-slate-300">{fmt(r.alPrice, 2)}</td>
+              <td className="px-3 py-2 text-right text-slate-400">{r.alTir.toFixed(2)}%</td>
+              <td className="px-3 py-2 text-right text-slate-300">{fmt(r.gdPrice, 2)}</td>
+              <td className="px-3 py-2 text-right text-slate-400">{r.gdTir.toFixed(2)}%</td>
+              <td className={`px-3 py-2 text-right font-bold ${r.spread > 0 ? 'text-amber-400' : 'text-cyan-400'}`}>
+                {r.spread > 0 ? '+' : ''}{r.spread.toFixed(2)}pp
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="px-3 py-1.5 text-[9px] text-slate-600 tracking-wider border-t border-slate-900">
+        * Spread &gt; 0 → mercado castiga ley local · Spread &lt; 0 → anomalía
+      </div>
+    </div>
+  );
+}
+
+function MarkdownLite({ text }) {
+  if (!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <span>
+      {parts.map((p, i) => {
+        if (p.startsWith('**') && p.endsWith('**')) {
+          return <strong key={i} className="text-amber-400 font-semibold">{p.slice(2, -2)}</strong>;
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </span>
+  );
+}
+
+function SettingsModal({ apiKey, onSave, onClose }) {
+  const [tempKey, setTempKey] = useState(apiKey || '');
+  const [show, setShow] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+         onClick={onClose}>
+      <div className="bg-slate-950 border border-amber-500/40 max-w-md w-full shadow-2xl"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900">
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-amber-400"/>
+            <span className="text-[12px] tracking-[0.2em] text-amber-400 font-semibold">ANTHROPIC API KEY</span>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300">
+            <X className="w-4 h-4"/>
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="text-[12px] text-slate-400 leading-relaxed space-y-2">
+            <p>
+              Para usar el IA Analyst, pegá tu API key de Anthropic. Se guarda <strong className="text-amber-400">solo en tu navegador</strong> (localStorage) — no se envía a ningún servidor excepto directamente a api.anthropic.com.
+            </p>
+            <p className="text-slate-500 text-[11px]">
+              Podés conseguir tu key en{' '}
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
+                 className="text-amber-400 hover:text-amber-300 underline inline-flex items-center gap-1">
+                console.anthropic.com/settings/keys <ExternalLink className="w-2.5 h-2.5"/>
+              </a>
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] tracking-[0.2em] text-slate-500 font-semibold">API KEY</label>
+            <div className="flex items-center border border-slate-800 focus-within:border-amber-500/60 bg-slate-900/50">
+              <input type={show ? 'text' : 'password'}
+                value={tempKey}
+                onChange={e => setTempKey(e.target.value)}
+                placeholder="sk-ant-..."
+                className="flex-1 bg-transparent px-3 py-2.5 text-[12px] text-slate-200 placeholder-slate-600 outline-none tabular"/>
+              <button onClick={() => setShow(s => !s)}
+                className="px-3 py-2.5 text-[10px] tracking-wider text-slate-500 hover:text-amber-400 border-l border-slate-800">
+                {show ? 'OCULTAR' : 'VER'}
+              </button>
+            </div>
+            {apiKey && (
+              <div className="text-[10px] text-emerald-400 tracking-wider">
+                ✓ KEY GUARDADA (termina en ...{apiKey.slice(-6)})
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-900/50 border-l-2 border-amber-500/60 px-3 py-2 text-[11px] text-slate-400 leading-relaxed">
+            <strong className="text-amber-400">Nota técnica:</strong> la llamada va directo del browser a Anthropic con el header{' '}
+            <code className="text-cyan-400">anthropic-dangerous-direct-browser-access</code>. Si tu billing no está activo o la key es inválida, vas a ver el error en el chat.
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button onClick={() => { onSave(''); }}
+              className="px-3 py-2 text-[11px] tracking-wider text-slate-500 hover:text-rose-400 transition-colors">
+              BORRAR
+            </button>
+            <button onClick={onClose}
+              className="px-3 py-2 text-[11px] tracking-wider text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 transition-colors">
+              CANCELAR
+            </button>
+            <button onClick={() => onSave(tempKey.trim())} disabled={!tempKey.trim()}
+              className="px-4 py-2 text-[11px] tracking-wider bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-semibold transition-colors">
+              GUARDAR
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════════════════
+ReactDOM.createRoot(document.getElementById('root')).render(<MesaIA/>);
+  </script>
+</body>
+</html>
